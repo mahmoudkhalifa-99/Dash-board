@@ -68,6 +68,11 @@ table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
 .ttl{order:3;flex-basis:100%}}
 @media(max-width:600px){.sheet{padding:12px}.tile{flex:1 1 100%}.wt{flex:1 1 100%}.split{flex-direction:column}.split .cv,.leg{width:100%}}
 
+.perlabel{display:none;background:#000;color:#fff;border-radius:22px;padding:8px 18px;font:400 17px var(--font);direction:ltr}
+.exporting .perlabel{display:inline-flex}
+.loading{display:flex;align-items:center;gap:10px}
+.spin{width:16px;height:16px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--head);animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
 /* ===== وضع التصدير/الطباعة: تخطيط ديسكتوب ثابت العرض + إخفاء الأزرار ===== */
 .busy{position:fixed;inset:0;z-index:999;background:rgba(0,0,0,.55);color:#fff;display:flex;align-items:center;justify-content:center;font:700 22px var(--font)}
 .exporting .noexp,.exporting .pop{display:none!important}

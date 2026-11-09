@@ -29,12 +29,12 @@ export function useData() {
   const [at, setAt] = useState<Date | null>(null);
   const busy = useRef(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     if (busy.current) return;
     busy.current = true;
     setState('loading');
     try {
-      const url = URL_ ? `${URL_}${URL_.includes('?') ? '&' : '?'}t=${Date.now()}` : `${import.meta.env.BASE_URL}sample.json`;
+      const url = URL_ ? `${URL_}${URL_.includes('?') ? '&' : '?'}t=${Date.now()}${force ? '&nocache=1' : ''}` : `${import.meta.env.BASE_URL}sample.json`;
       const res = await fetch(url, { redirect: 'follow' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const j = (await res.json()) as Payload;
@@ -54,5 +54,5 @@ export function useData() {
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', v); };
   }, [load]);
 
-  return { data, state, error, at, reload: load };
+  return { data, state, error, at, reload: () => { void load(true); } };
 }

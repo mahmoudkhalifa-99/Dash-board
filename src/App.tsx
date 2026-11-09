@@ -39,7 +39,7 @@ export default function App() {
   if (!data) {
     return (
       <div className="banner" dir="rtl">
-        {state === 'error' ? <>تعذر تحميل البيانات: {error}. راجع رابط Apps Script في ملف .env وإن النشر "Anyone".</> : 'جاري تحميل البيانات...'}
+        {state === 'error' ? <>تعذر تحميل البيانات: {error}. راجع رابط Apps Script في ملف .env وإن النشر "Anyone".</> : <span className="loading"><i className="spin" />جاري تحميل البيانات... (أول مرة على الجهاز بس بتاخد وقت، بعدها بيفتح فوراً)</span>}
       </div>
     );
   }
@@ -118,7 +118,9 @@ function Report({ data, state, error, at, reload }: { data: Payload; state: stri
   const stc: Record<number, string> = { 1: t.blue, 2: t.v('--olive'), 0: t.blue2 };
   const o = data.oth;
 
-  const dlabel = full ? 'Select date' : `${MN[f.m1]} 2026 – ${MN[m2]} 2026`;
+  // نفس الشهر -> اسم الشهر بس، غير كده -> الفترة
+  const periodLabel = f.m1 === m2 ? `${MN[f.m1]} 2026` : `${MN[f.m1]} 2026 – ${MN[m2]} 2026`;
+  const dlabel = full ? 'Select date' : periodLabel;
   const dot = state === 'error' ? 'err' : state === 'loading' ? 'load' : '';
 
   return (
@@ -136,7 +138,8 @@ function Report({ data, state, error, at, reload }: { data: Payload; state: stri
               {state === 'error' ? `آخر محاولة فشلت: ${error}` : at ? `تحديث تلقائي · آخر مزامنة ${at.toLocaleTimeString('ar-EG')}` : 'جاري المزامنة...'}
               {usingSample && ' · بيانات تجريبية (حط رابط Apps Script في .env)'}
             </span>
-            <button className="datebtn" type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}><span>{dlabel}</span><span>▾</span></button>
+            <button className="datebtn noexp" type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}><span>{dlabel}</span><span>▾</span></button>
+            <span className="perlabel">{periodLabel}</span>
             {open && (
               <div className="pop">
                 <label>من شهر<select className="sel" value={f.m1} onChange={(e) => setRange(+e.target.value, m2)}>{MN.slice(0, LAST + 1).map((m, i) => <option key={m} value={i}>{m} 2026</option>)}</select></label>
@@ -189,7 +192,7 @@ function Report({ data, state, error, at, reload }: { data: Payload; state: stri
       {/* ============ PAGE 2 ============ */}
       <section className="sheet">
         <div className="top">
-          <div className="top-l"><span className="sel" style={{ minWidth: 0 }}>الفترة: {full ? 'كل الشهور' : `${MN[f.m1]} – ${MN[m2]} 2026`}{f.store ? ' · ' + f.store : ''}</span></div>
+          <div className="top-l"><span className="sel" style={{ minWidth: 0 }}>الفترة: {periodLabel}{f.store ? ' · ' + f.store : ''}</span></div>
           <div className="ttl">الصرف والتوريد التفصيلي</div>
           <Logo />
         </div>

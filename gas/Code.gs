@@ -34,19 +34,30 @@ const STORE_FIX = { 'اصول ثابتة': 'الاصول الثابتة' };
 const DEPT_FIX = { 'it': 'تكنولوجيا المعلومات', 'الميكانيكا': 'ادارة الصيانة' };
 
 /* ---------- web app ---------- */
-const CACHE_SECONDS = 120; // الكاش بيخلي أي زيارة تانية خلال دقيقتين فورية
+const CACHE_SECONDS = 120;       // بدون Trigger: الكاش يعتبر طازج دقيقتين
+const AUTO_FRESH_SECONDS = 420;  // مع Trigger كل 5 دقايق: يعتبر طازج 7 دقايق
+const CACHE_TTL = 21600;         // أقصى مدة تخزين في CacheService (6 ساعات)
 
 function doGet(e) {
   try {
-    const fresh = e && e.parameter && e.parameter.nocache;
-    if (!fresh) { const hit = cacheGet_(); if (hit) return ContentService.createTextOutput(hit).setMimeType(ContentService.MimeType.JSON); }
+    const force = e && e.parameter && e.parameter.nocache; // زر "تحديث الآن" بيطلب بيانات جديدة
+    if (!force) { const hit = cacheGet_(); if (hit) return ContentService.createTextOutput(hit).setMimeType(ContentService.MimeType.JSON); }
     const out = JSON.stringify(build_());
-    if (!fresh) cachePut_(out);
+    cachePut_(out);
     return ContentService.createTextOutput(out).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return json_({ error: String(err && err.message || err) });
   }
 }
+
+/** شغّلها مرة واحدة من المحرر: بتجهّز الداتا في الخلفية كل 5 دقايق فالتطبيق يفتح فوراً */
+function installTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'refreshCache') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('refreshCache').timeBased().everyMinutes(5).create();
+  PropertiesService.getScriptProperties().setProperty('AUTO_REFRESH', '1');
+  refreshCache();
+}
+function refreshCache() { cachePut_(JSON.stringify(build_())); }
 
 function build_() {
   const ss = SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
@@ -63,24 +74,28 @@ function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
-/* كاش مقسّم (الحد 100KB للمفتاح الواحد) */
+/* كاش مقسّم. مهم: الحد 100KB "بايت" للمفتاح، والعربي 2 بايت للحرف، فالنص بيتضغط gzip ويتحوّل base64 (ASCII)
+   قبل التقسيم. (النسخة القديمة كانت بتقسّم 90000 حرف عربي = 180KB فالكاش كان بيفشل بصمت وكل زيارة تقرا الشيتات من الأول) */
 function cachePut_(str) {
   try {
     const c = CacheService.getScriptCache(), size = 90000, map = {};
+    const b64 = Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(str, 'application/json', 'd.json')).getBytes());
     let n = 0;
-    for (let i = 0; i < str.length; i += size) map['p' + (n++)] = str.substring(i, i + size);
-    map.n = String(n);
-    c.putAll(map, CACHE_SECONDS);
-  } catch (e) { /* الكاش اختياري */ }
+    for (let i = 0; i < b64.length; i += size) map['p' + (n++)] = b64.substring(i, i + size);
+    map.n = String(n); map.t = String(Date.now());
+    c.putAll(map, CACHE_TTL);
+  } catch (e) { Logger.log('cache put failed: ' + e); }
 }
 function cacheGet_() {
   try {
-    const c = CacheService.getScriptCache(), n = parseInt(c.get('n'), 10);
-    if (!n) return null;
+    const c = CacheService.getScriptCache(), n = parseInt(c.get('n'), 10), t = parseInt(c.get('t'), 10);
+    if (!n || !t) return null;
+    const auto = PropertiesService.getScriptProperties().getProperty('AUTO_REFRESH') === '1';
+    if ((Date.now() - t) / 1000 > (auto ? AUTO_FRESH_SECONDS : CACHE_SECONDS)) return null;
     const keys = []; for (let i = 0; i < n; i++) keys.push('p' + i);
-    const m = c.getAll(keys); let s = '';
-    for (let i = 0; i < n; i++) { if (m['p' + i] === undefined) return null; s += m['p' + i]; }
-    return s;
+    const m = c.getAll(keys); let b64 = '';
+    for (let i = 0; i < n; i++) { if (m['p' + i] === undefined) return null; b64 += m['p' + i]; }
+    return Utilities.ungzip(Utilities.newBlob(Utilities.base64Decode(b64), 'application/x-gzip')).getDataAsString('UTF-8');
   } catch (e) { return null; }
 }
 
