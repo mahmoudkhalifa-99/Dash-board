@@ -31,6 +31,14 @@ export function useTheme() {
 }
 export type Theme = ReturnType<typeof useTheme>;
 
+/** يعيد قياس كل الشارتات (بعد تغيير عرض الصفحة وقت الطباعة/PDF) */
+export function resizeCharts(dpr?: number) {
+  Object.values(C.instances).forEach((c) => {
+    c.options.devicePixelRatio = dpr ?? (window.devicePixelRatio || 1);
+    c.resize();
+  });
+}
+
 export const axes = (t: Theme, o: { xGrid?: boolean } = {}) => ({
   x: { grid: { color: t.grid, display: o.xGrid ?? false }, border: { display: false }, ticks: { color: t.fg } },
   y: { grid: { color: t.grid }, border: { display: false }, beginAtZero: true, ticks: { color: t.fg } },

@@ -5,6 +5,7 @@ import { Bar, Donut, HBar, Line, axes, useTheme } from './components/Charts';
 import { MN, STORES, applyFilters, cnt, fmt, lastMonth, monthOf, short, uniq } from './lib/data';
 import type { Filters, Payload } from './lib/data';
 import { useData, usingSample } from './lib/useData';
+import { downloadPdf, enterExport, fitForPrint, leaveExport, printReport } from './lib/exporter';
 
 const Logo = () => (
   <div className="logo"><img alt="الدقهلية للدواجن – Dakahlia Poultry" src={`${import.meta.env.BASE_URL}logo.png`} /></div>
@@ -62,6 +63,15 @@ function Report({ data, state, error, at, reload }: { data: Payload; state: stri
     return () => document.removeEventListener('keydown', k);
   }, []);
 
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { // يشتغل كمان لو المستخدم ضغط Ctrl+P
+    const before = () => { enterExport(); fitForPrint(); };
+    window.addEventListener('beforeprint', before);
+    window.addEventListener('afterprint', leaveExport);
+    return () => { window.removeEventListener('beforeprint', before); window.removeEventListener('afterprint', leaveExport); };
+  }, []);
+  const onPdf = async () => { setBusy(true); try { await downloadPdf(); } catch (e) { console.error(e); alert('تعذر إنشاء ملف PDF'); } finally { setBusy(false); } };
+
   const setRange = (a: number, b: number) => setF((p) => ({ ...p, m1: Math.min(a, b), m2: Math.max(a, b) }));
 
   /* ---- page 1 ---- */
@@ -113,12 +123,15 @@ function Report({ data, state, error, at, reload }: { data: Payload; state: stri
 
   return (
     <main dir="rtl">
+      {busy && <div className="busy" role="alert">جاري تجهيز ملف PDF...</div>}
       {/* ============ PAGE 1 ============ */}
       <section className="sheet">
         <div className="top">
           <div className="top-l">
-            <button className="pill up" type="button" onClick={reload}>تحديث الآن</button>
-            <span className="sync" role="status">
+            <button className="pill up noexp" type="button" onClick={() => { void printReport(); }}>🖨 طباعة</button>
+            <button className="pill up noexp" type="button" disabled={busy} onClick={() => { void onPdf(); }}>{busy ? 'جاري إنشاء PDF...' : '⬇ تحميل PDF'}</button>
+            <button className="pill up noexp" type="button" onClick={reload}>تحديث الآن</button>
+            <span className="sync noexp" role="status">
               <span className={`dot ${dot}`} />
               {state === 'error' ? `آخر محاولة فشلت: ${error}` : at ? `تحديث تلقائي · آخر مزامنة ${at.toLocaleTimeString('ar-EG')}` : 'جاري المزامنة...'}
               {usingSample && ' · بيانات تجريبية (حط رابط Apps Script في .env)'}

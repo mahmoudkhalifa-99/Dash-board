@@ -34,24 +34,54 @@ const STORE_FIX = { 'اصول ثابتة': 'الاصول الثابتة' };
 const DEPT_FIX = { 'it': 'تكنولوجيا المعلومات', 'الميكانيكا': 'ادارة الصيانة' };
 
 /* ---------- web app ---------- */
-function doGet() {
+const CACHE_SECONDS = 120; // الكاش بيخلي أي زيارة تانية خلال دقيقتين فورية
+
+function doGet(e) {
   try {
-    const ss = SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
-    const tz = ss.getSpreadsheetTimeZone();
-    const ctx = { lo: new Date(YEAR, 0, 1), hi: new Date(), tz: tz };
-    const iss = readIssues_(ss, ctx), add = readAdditions_(ss, ctx), pr = readPurchase_(ss, ctx), bal = readBalances_(ss);
-    const oth = {};
-    Object.keys(COLS.oth).forEach(function (k) { oth[k] = countRows_(ss, COLS.oth[k]); });
-    let asof = YEAR + '-01-01';
-    iss.forEach(function (r) { if (r[0] > asof) asof = r[0]; });
-    return json_({ version: DATA_SCHEMA_VERSION, generatedAt: new Date().toISOString(), asof: asof, iss: iss, add: add, pr: pr, bal: bal, oth: oth });
+    const fresh = e && e.parameter && e.parameter.nocache;
+    if (!fresh) { const hit = cacheGet_(); if (hit) return ContentService.createTextOutput(hit).setMimeType(ContentService.MimeType.JSON); }
+    const out = JSON.stringify(build_());
+    if (!fresh) cachePut_(out);
+    return ContentService.createTextOutput(out).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return json_({ error: String(err && err.message || err) });
   }
 }
 
+function build_() {
+  const ss = SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
+  const ctx = { lo: new Date(YEAR, 0, 1), hi: new Date(), tz: ss.getSpreadsheetTimeZone() };
+  const iss = readIssues_(ss, ctx), add = readAdditions_(ss, ctx), pr = readPurchase_(ss, ctx), bal = readBalances_(ss);
+  const oth = {};
+  Object.keys(COLS.oth).forEach(function (k) { oth[k] = countRows_(ss, COLS.oth[k]); });
+  let asof = YEAR + '-01-01';
+  iss.forEach(function (r) { if (r[0] > asof) asof = r[0]; });
+  return { version: DATA_SCHEMA_VERSION, generatedAt: new Date().toISOString(), asof: asof, iss: iss, add: add, pr: pr, bal: bal, oth: oth };
+}
+
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/* كاش مقسّم (الحد 100KB للمفتاح الواحد) */
+function cachePut_(str) {
+  try {
+    const c = CacheService.getScriptCache(), size = 90000, map = {};
+    let n = 0;
+    for (let i = 0; i < str.length; i += size) map['p' + (n++)] = str.substring(i, i + size);
+    map.n = String(n);
+    c.putAll(map, CACHE_SECONDS);
+  } catch (e) { /* الكاش اختياري */ }
+}
+function cacheGet_() {
+  try {
+    const c = CacheService.getScriptCache(), n = parseInt(c.get('n'), 10);
+    if (!n) return null;
+    const keys = []; for (let i = 0; i < n; i++) keys.push('p' + i);
+    const m = c.getAll(keys); let s = '';
+    for (let i = 0; i < n; i++) { if (m['p' + i] === undefined) return null; s += m['p' + i]; }
+    return s;
+  } catch (e) { return null; }
 }
 
 /* ---------- helpers ---------- */
@@ -80,23 +110,34 @@ function parseDate_(v, ctx) {
   return Utilities.formatDate(d, ctx.tz, 'yyyy-MM-dd');
 }
 
-function rows_(ss, name, header) {
-  const sh = ss.getSheetByName(name);
-  if (!sh) throw new Error('الشيت مش موجود: ' + name);
-  const last = sh.getLastRow();
-  if (last <= header) return [];
-  return sh.getRange(header + 1, 1, last - header, sh.getLastColumn()).getValues();
+/**
+ * يقرأ الأعمدة المطلوبة بس، وحتى آخر صف فيه بيانات في عمود المفتاح
+ * (بدل قراءة الشيت كله، وده كان بياخد 45 ثانية).
+ * يرجّع { vals, c0 } والـ getter بيطرح c0 من رقم العمود.
+ */
+function block_(ss, cfg, keyKey) {
+  const sh = ss.getSheetByName(cfg.sheet);
+  if (!sh) throw new Error('الشيت مش موجود: ' + cfg.sheet);
+  const maxRows = sh.getMaxRows(), h = cfg.header;
+  if (maxRows <= h) return { vals: [], c0: 0 };
+  const keys = sh.getRange(h + 1, idx_(cfg[keyKey]) + 1, maxRows - h, 1).getValues();
+  let last = 0;
+  for (let i = keys.length - 1; i >= 0; i--) { if (keys[i][0] !== '' && keys[i][0] !== null) { last = i + 1; break; } }
+  if (!last) return { vals: [], c0: 0 };
+  let c0 = 1e9, c1 = 0;
+  Object.keys(cfg).forEach(function (k) { if (k === 'sheet' || k === 'header') return; const i = idx_(cfg[k]); if (i < c0) c0 = i; if (i > c1) c1 = i; });
+  return { vals: sh.getRange(h + 1, c0 + 1, last, c1 - c0 + 1).getValues(), c0: c0 };
 }
-function getter_(cfg) { // يرجّع دالة g(row,'key') تقرأ بالحرف
+function getter_(cfg, c0) { // يرجّع دالة g(row,'key') تقرأ بالحرف
   const ix = {};
-  Object.keys(cfg).forEach(function (k) { if (k !== 'sheet' && k !== 'header') ix[k] = idx_(cfg[k]); });
+  Object.keys(cfg).forEach(function (k) { if (k !== 'sheet' && k !== 'header') ix[k] = idx_(cfg[k]) - c0; });
   return function (r, k) { return r[ix[k]]; };
 }
 
 /* ---------- readers ---------- */
 function readIssues_(ss, ctx) {
-  const c = COLS.iss, g = getter_(c), out = [];
-  rows_(ss, c.sheet, c.header).forEach(function (r) {
+  const c = COLS.iss, B = block_(ss, c, 'item'), g = getter_(c, B.c0), out = [];
+  B.vals.forEach(function (r) {
     const d = parseDate_(g(r, 'date'), ctx), item = clean_(g(r, 'item')), s = clean_(g(r, 'store'));
     if (!d || !item || OK_STORES.indexOf(s) < 0) return;
     const dep = clean_(g(r, 'dept'));
@@ -106,8 +147,8 @@ function readIssues_(ss, ctx) {
 }
 
 function readAdditions_(ss, ctx) {
-  const c = COLS.add, g = getter_(c), out = [];
-  rows_(ss, c.sheet, c.header).forEach(function (r) {
+  const c = COLS.add, B = block_(ss, c, 'item'), g = getter_(c, B.c0), out = [];
+  B.vals.forEach(function (r) {
     const d = parseDate_(g(r, 'date'), ctx), item = clean_(g(r, 'item')), s = clean_(g(r, 'store'));
     if (!d || !item || s === 'من فضلك راجع الكود مرة اخرى') return;
     // عدد أذون الإضافة = عدد أرقام الأوردر المختلفة (زي ما الشيت بيحسبها)
@@ -117,8 +158,8 @@ function readAdditions_(ss, ctx) {
 }
 
 function readPurchase_(ss, ctx) {
-  const c = COLS.pr, g = getter_(c), out = [];
-  rows_(ss, c.sheet, c.header).forEach(function (r) {
+  const c = COLS.pr, B = block_(ss, c, 'item'), g = getter_(c, B.c0), out = [];
+  B.vals.forEach(function (r) {
     const d = parseDate_(g(r, 'date'), ctx);
     if (!d || !clean_(g(r, 'item'))) return;
     const qo = num_(g(r, 'qtyOrd')), qi = num_(g(r, 'qtyIn')) || 0;
@@ -129,8 +170,8 @@ function readPurchase_(ss, ctx) {
 }
 
 function readBalances_(ss) {
-  const c = COLS.bal, g = getter_(c), out = [];
-  rows_(ss, c.sheet, c.header).forEach(function (r) {
+  const c = COLS.bal, B = block_(ss, c, 'item'), g = getter_(c, B.c0), out = [];
+  B.vals.forEach(function (r) {
     const item = clean_(g(r, 'item')), s = clean_(g(r, 'store'));
     if (!item || s === 'الاعاشة') return;
     out.push([item, s, clean_(g(r, 'group')), clean_(g(r, 'status')), clean_(g(r, 'move')), num_(g(r, 'bal')) || 0, clean_(g(r, 'unit')), num_(g(r, 'min')), num_(g(r, 'reorder'))]);
@@ -139,12 +180,26 @@ function readBalances_(ss) {
 }
 
 function countRows_(ss, spec) {
-  const col = idx_(spec[2]);
-  return rows_(ss, spec[0], spec[1]).filter(function (r) { return clean_(r[col]) !== ''; }).length;
+  const sh = ss.getSheetByName(spec[0]);
+  if (!sh || sh.getMaxRows() <= spec[1]) return 0;
+  return sh.getRange(spec[1] + 1, idx_(spec[2]) + 1, sh.getMaxRows() - spec[1], 1).getValues().filter(function (r) { return clean_(r[0]) !== ''; }).length;
 }
 
-/** للتجربة من محرر السكربت: بيطبع ملخص الأعداد */
+/** للتجربة من محرر السكربت: بيطبع ملخص الأعداد والوقت */
 function testRun() {
-  const out = JSON.parse(doGet().getContent());
-  Logger.log(JSON.stringify({ iss: out.iss && out.iss.length, add: out.add && out.add.length, pr: out.pr && out.pr.length, bal: out.bal && out.bal.length, oth: out.oth, asof: out.asof, error: out.error }));
+  const t0 = Date.now(), out = build_();
+  Logger.log(JSON.stringify({ seconds: (Date.now() - t0) / 1000, iss: out.iss.length, add: out.add.length, pr: out.pr.length, bal: out.bal.length, oth: out.oth, asof: out.asof }));
+}
+
+/** تشخيص: بيطبع توزيع بنود الإضافة والصرف بالشهر وعينات، عشان نكتشف أي فرق في الأعداد */
+function diagnose() {
+  const out = build_(), by = function (rows) { const m = {}; rows.forEach(function (r) { const k = r[0].slice(0, 7); m[k] = (m[k] || 0) + 1; }); return m; };
+  Logger.log('ADD by month: ' + JSON.stringify(by(out.add)));
+  Logger.log('ADD unique orders: ' + new Set(out.add.map(function (r) { return r[1]; })).size);
+  Logger.log('ADD first 3: ' + JSON.stringify(out.add.slice(0, 3)));
+  Logger.log('ADD last 3: ' + JSON.stringify(out.add.slice(-3)));
+  Logger.log('ISS by month: ' + JSON.stringify(by(out.iss)));
+  const ss = SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName(COLS.add.sheet);
+  Logger.log('ADD sheet rows(max/last): ' + sh.getMaxRows() + ' / ' + sh.getLastRow());
 }
