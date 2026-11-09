@@ -1,40 +1,89 @@
 import { resizeCharts } from '../components/Charts';
 
-/** عرض الصفحة الثابت وقت الطباعة/التصدير (نفس شكل الديسكتوب بغض النظر عن حجم الشاشة) */
-const W = 1400;
+/**
+ * كل الصفحات بنفس العرض والارتفاع بالظبط (A4 رأسي، بدقة 150dpi = 1240x1754).
+ * المحتوى بيتمدد (ارتفاع الشارتات) عشان يملا الصفحة من غير أي فراغ.
+ * لو أطول صفحة محتواها أكبر من A4، كل الصفحات بتاخد نفس الارتفاع الأكبر.
+ */
+const W = 1240;
+const RATIO = 297 / 210;
 let active = false;
+let pageH = Math.round(W * RATIO);
 
 const sheets = () => Array.from(document.querySelectorAll<HTMLElement>('.sheet'));
-const hexToRgb = (h: string): [number, number, number] => {
-  const m = /^#?([0-9a-f]{6})$/i.exec(h.trim());
-  if (!m) return [255, 255, 255];
-  const n = parseInt(m[1], 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-};
 
-/** يثبّت التخطيط على عرض ثابت ويعيد رسم الشارتات بدقة أعلى */
+function resetSheet(s: HTMLElement) {
+  s.style.height = '';
+  s.style.zoom = '';
+  s.querySelectorAll<HTMLElement>('.cv').forEach((cv) => { cv.style.height = ''; });
+  const g = s.querySelector<HTMLElement>('.grid');
+  if (g) g.style.alignItems = '';
+}
+
+type Row = { rowH: number; cards: { h: number; cv: HTMLElement[] }[] };
+
+/** يوزّع المساحة الزيادة على صفوف الشارتات لحد ما ارتفاع الصفحة يساوي H */
+function grow(s: HTMLElement, H: number) {
+  const grid = s.querySelector<HTMLElement>('.grid');
+  if (grid) {
+    grid.style.alignItems = 'start'; // عشان نقيس الارتفاع الطبيعي لكل كارت
+    const measure = (): Row[] => {
+      const map = new Map<number, Row>();
+      grid.querySelectorAll<HTMLElement>(':scope > .card').forEach((card) => {
+        const top = Math.round(card.offsetTop);
+        const r = map.get(top) ?? { rowH: 0, cards: [] };
+        const h = card.getBoundingClientRect().height;
+        r.rowH = Math.max(r.rowH, h);
+        r.cards.push({ h, cv: Array.from(card.querySelectorAll<HTMLElement>('.cv')) });
+        map.set(top, r);
+      });
+      return [...map.values()].filter((r) => r.cards.some((c) => c.cv.length));
+    };
+    const apply = (r: Row, target: number) =>
+      r.cards.forEach((c) => c.cv.forEach((cv) => {
+        cv.style.height = Math.max(120, cv.getBoundingClientRect().height + (target - c.h)) + 'px';
+      }));
+
+    let rows = measure();
+    if (rows.length) {
+      const share = (H - s.getBoundingClientRect().height) / rows.length;
+      rows.forEach((r) => apply(r, r.rowH + share));
+      rows = measure();
+      const resid = H - s.getBoundingClientRect().height;
+      if (rows.length && Math.abs(resid) > 0.5) apply(rows[rows.length - 1], rows[rows.length - 1].rowH + resid);
+    }
+    grid.style.alignItems = '';
+  }
+  s.style.height = H + 'px';
+}
+
+function layoutPages() {
+  const els = sheets();
+  els.forEach(resetSheet);
+  const nat = els.map((s) => s.getBoundingClientRect().height);
+  pageH = Math.ceil(Math.max(W * RATIO, ...nat));
+  els.forEach((s) => grow(s, pageH));
+}
+
+/** يثبّت التخطيط على عرض/ارتفاع ثابتين ويعيد رسم الشارتات بدقة أعلى */
 export function enterExport() {
   if (active) return;
   active = true;
   document.documentElement.classList.add('exporting');
+  layoutPages();
   resizeCharts(Math.max(2, window.devicePixelRatio || 1));
 }
 
-/** للطباعة: يصغّر كل صفحة (zoom) لتناسب ورقة A4 أفقي بالكامل */
+/** للطباعة: كل صفحة تتصغّر (zoom) لتملا ورقة A4 رأسي بالكامل (@page margin 0) */
 export function fitForPrint() {
-  const availW = 285 * 3.7795; // A4 landscape - هوامش 6mm
-  const availH = 198 * 3.7795 - 4;
-  sheets().forEach((s) => {
-    s.style.zoom = '1';
-    const h = s.getBoundingClientRect().height;
-    s.style.zoom = String(Math.min(1, availW / W, availH / h));
-  });
+  const z = Math.min((210 * 3.7795) / W, (297 * 3.7795) / pageH) * 0.995;
+  sheets().forEach((s) => { s.style.zoom = String(z); });
 }
 
 export function leaveExport() {
   if (!active) return;
   active = false;
-  sheets().forEach((s) => { s.style.zoom = ''; });
+  sheets().forEach(resetSheet);
   document.documentElement.classList.remove('exporting');
   resizeCharts();
 }
@@ -57,26 +106,15 @@ export async function downloadPdf() {
     await document.fonts.ready;
     await frame();
     const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import('html2canvas-pro'), import('jspdf')]);
-    const css = getComputedStyle(document.documentElement);
-    const pageBg = hexToRgb(css.getPropertyValue('--page'));
-    const sheetBg = css.getPropertyValue('--bg').trim() || '#ffffff';
-    const M = 4; // mm
+    const sheetBg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#ffffff';
+    const mmW = 210, mmH = (210 * pageH) / W; // نفس المقاس لكل الصفحات
     let pdf: InstanceType<typeof jsPDF> | null = null;
 
     for (const el of sheets()) {
       const cv = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: sheetBg, windowWidth: W + 100, scrollX: 0, scrollY: 0 });
-      const ratio = cv.height / cv.width;
-      // يختار الاتجاه (أفقي/رأسي) اللي يخلي الصفحة أكبر على الورقة
-      const fit = (pw: number, ph: number) => Math.min((pw - 2 * M) / 1, (ph - 2 * M) / ratio);
-      const land = fit(297, 210) >= fit(210, 297);
-      const orient = land ? 'landscape' : 'portrait';
-      if (!pdf) pdf = new jsPDF({ orientation: orient, unit: 'mm', format: 'a4', compress: true });
-      else pdf.addPage('a4', orient);
-      const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
-      pdf.setFillColor(...pageBg);
-      pdf.rect(0, 0, pw, ph, 'F');
-      const w = fit(pw, ph), h = w * ratio;
-      pdf.addImage(cv.toDataURL('image/png'), 'PNG', (pw - w) / 2, (ph - h) / 2, w, h, undefined, 'FAST');
+      if (!pdf) pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: [mmW, mmH], compress: true });
+      else pdf.addPage([mmW, mmH], 'portrait');
+      pdf.addImage(cv.toDataURL('image/png'), 'PNG', 0, 0, mmW, mmH, undefined, 'FAST'); // ملء الصفحة بالكامل
     }
     pdf?.save(`dakahlia-warehouse-report-${new Date().toISOString().slice(0, 10)}.pdf`);
   } finally {

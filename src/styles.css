@@ -77,18 +77,19 @@ table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
 .busy{position:fixed;inset:0;z-index:999;background:rgba(0,0,0,.55);color:#fff;display:flex;align-items:center;justify-content:center;font:700 22px var(--font)}
 .exporting .noexp,.exporting .pop{display:none!important}
 .exporting body{padding:0}
-.exporting .sheet{width:1400px;max-width:none;margin:0 0 20px}
+.exporting .sheet{width:1240px;max-width:none;margin:0 0 20px;border:0;border-radius:0;overflow:hidden}
+.exporting .leg span{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.25}
 .exporting .s4{grid-column:span 4}.exporting .s5{grid-column:span 5}.exporting .s6{grid-column:span 6}.exporting .s7{grid-column:span 7}.exporting .s8{grid-column:span 8}.exporting .s12{grid-column:span 12}
 .exporting .ttl{order:0;flex-basis:auto}
 .exporting .tile{flex:0 1 250px}.exporting .wt{flex:0 1 200px}
 .exporting .split{flex-direction:row}.exporting .split .cv{width:auto}.exporting .leg{width:auto}
 .exporting .mt,.exporting .mt.narrow{max-height:none!important;overflow:visible!important}
 
-@page{size:A4 landscape;margin:6mm}
+@page{size:A4 portrait;margin:0}
 @media print{
   *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
   .pop,.noexp{display:none!important}
-  html,body{background:var(--page);padding:0;margin:0}
+  html,body{background:var(--bg);padding:0;margin:0}
   .sheet{break-after:page;page-break-after:always;break-inside:avoid;margin:0!important;border-radius:0}
   .sheet:last-of-type{break-after:auto;page-break-after:auto}
 }
