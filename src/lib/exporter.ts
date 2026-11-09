@@ -107,12 +107,12 @@ export async function downloadPdf() {
     await frame();
     const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import('html2canvas-pro'), import('jspdf')]);
     const sheetBg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#ffffff';
-    const mmW = 210, mmH = (210 * pageH) / W; // نفس المقاس لكل الصفحات
+    const mmW = 210, mmH = Math.round(((210 * pageH) / W) * 100) / 100; // نفس المقاس لكل الصفحات (297 لو المحتوى بيساع A4)
     let pdf: InstanceType<typeof jsPDF> | null = null;
 
     for (const el of sheets()) {
       const cv = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: sheetBg, windowWidth: W + 100, scrollX: 0, scrollY: 0 });
-      if (!pdf) pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: [mmW, mmH], compress: true });
+      if (!pdf) pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: [mmW, mmH], compress: true, putOnlyUsedFonts: true });
       else pdf.addPage([mmW, mmH], 'portrait');
       pdf.addImage(cv.toDataURL('image/png'), 'PNG', 0, 0, mmW, mmH, undefined, 'FAST'); // ملء الصفحة بالكامل
     }
